@@ -153,7 +153,7 @@ di_reward   = nidq_digital_bits[:, 7]   # DI7
 
 # PART 1 - Extract TTL pulses
 
-def ttl_windows(x, fs, thresh=0.5, min_dur_s=0.0):
+def ttl_windows(x, fs, thresh=0.5, min_dur_s=0.1):
     """
     Extract TTL pulses as:
       on_idx, off_idx, on_s, off_s, dur_s

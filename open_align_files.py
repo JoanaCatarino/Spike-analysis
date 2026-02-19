@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 
 base_nidq = "L:/dmclab/Joana/PFC-Str_behavior_project/Recordings/Raw_data/999770/999770_day1_g0"
 base_imec = base_nidq + "/999770_day1_1_g0_imec1"
+ttl_align_dir = "L:/Joana/PFC-Str_behavior_project/Recordings/Sorted/999770/999770_day1_1_g0_t0_imec1/TTL_alignment"
 
 # Nidaq files
 path_nidq_meta = base_nidq + "/999770_day1_1_g0_t0.nidq.meta"
@@ -25,6 +26,11 @@ path_imec_ap_meta = base_imec + "/999770_day1_1_g0_t0.imec1.ap.meta"
 path_imec_ap_bin = base_imec + "/999770_day1_1_g0_t0.imec1.ap.bin"
 path_imec_lf_meta = base_imec + "/999770_day1_1_g0_t0.imec1.lf.meta"
 path_imec_lf_bin = base_imec + "/999770_day1_1_g0_t0.imec1.lf.bin"
+
+thr_sy = 10
+sy_cache    = os.path.join(ttl_align_dir, f"imec_SY_windows_thr{thr_sy}.npy")
+align_cache = os.path.join(ttl_align_dir, "alignment_params.npz")
+ttl_cache   = os.path.join(ttl_align_dir, "ttl_aligned_imec_time.npz")
 
 
 #%% Step 2
@@ -255,14 +261,39 @@ win_led_a   = find_threshold_windows_np(ai_blue_led, thr_led_v)
 win_sound_a = find_threshold_windows_np(ai_sound, thr_sound_v)
 win_laser_a = find_threshold_windows_np(ai_laser, thr_laser_v)
 
-# IMEC SY windows: threshold depends on your SY amplitude
-thr_sy = 10
-win_sy = find_threshold_windows_np(imec_sync, thr_sy)
-
 print("[TTL analog windows] LED:", win_led_a.shape[0], "SOUND:", win_sound_a.shape[0], "LASER:", win_laser_a.shape[0])
+
+
+# ---------- IMEC SY windows: threshold depends on your SY amplitude ----------
+thr_sy = 10
+
+if os.path.exists(sy_cache):
+    print("[CACHE] Loading IMEC SY windows:", sy_cache)
+    win_sy = np.load(sy_cache)
+else:
+    print("[CACHE] Computing IMEC SY windows (this may take a while)...")
+    win_sy = find_threshold_windows_np(imec_sync, thr_sy)
+    np.save(sy_cache, win_sy)
+    print("[CACHE] Saved IMEC SY windows:", sy_cache)
+
 print("[IMEC SY windows]", win_sy.shape[0])
 
 
+# Convert windows -> [rise_time, fall_time] in seconds
+def windows_to_pairs(windows, fs):
+    if windows.size == 0:
+        return np.empty((0, 2), dtype=np.float64)
+    rise = windows[:, 1] / fs
+    fall = windows[:, 2] / fs
+    return np.column_stack([rise, fall])
+
+ttl_led_a   = windows_to_pairs(win_led_a, nidq_fs)
+ttl_sound_a = windows_to_pairs(win_sound_a, nidq_fs)
+ttl_laser_a = windows_to_pairs(win_laser_a, nidq_fs)
+
+ttl_sy = windows_to_pairs(win_sy, imec_fs)  # SY in IMEC timebase
+imec_rise = ttl_sy[:, 0]                    # use rises for alignment
+print("[IMEC SY] rises:", imec_rise.size)
 
 #%% Step 9
 
@@ -339,6 +370,24 @@ nidq_sync_rise = ttls_daq[sync_bit][:, 0]
 a, b = fit_time_mapping(nidq_sync_rise, imec_rise, coarse_lag_s=coarse_lag_s, n_fit=5000)
 print(f"[ALIGN] t_imec ≈ {a:.12f} * t_nidq + {b:.6f}")
 
+
+# ---------- Save alignment parameters ----------
+
+align_cache = os.path.join(aligned_saved, "alignment_params.npz")
+
+np.savez(
+    align_cache,
+    sync_bit=sync_bit,
+    coarse_lag_s=coarse_lag_s,
+    a=a,
+    b=b,
+    nidq_fs=nidq_fs,
+    imec_fs=imec_fs,
+)
+
+print("[CACHE] Saved alignment parameters to:", align_cache)
+
+
 def nidq_to_imec(t_s):
     return a * np.asarray(t_s) + b
 
@@ -364,6 +413,23 @@ ttl_sound_a_imec = map_pairs_to_imec(ttl_sound_a)
 ttl_laser_a_imec = map_pairs_to_imec(ttl_laser_a)
 
 print("[DONE] All NIDQ TTLs now have [rise, fall] in IMEC seconds.")
+
+# ---------- Save aligned TTLs ----------
+
+ttl_cache = os.path.join(ttl_align_dir, "ttl_aligned_imec_time.npz")
+
+np.savez(
+    ttl_cache,
+    ttl_led_d_imec=ttl_led_d_imec,
+    ttl_stim_d_imec=ttl_stim_d_imec,
+    ttl_pun_d_imec=ttl_pun_d_imec,
+    ttl_rew_d_imec=ttl_rew_d_imec,
+    ttl_led_a_imec=ttl_led_a_imec,
+    ttl_sound_a_imec=ttl_sound_a_imec,
+    ttl_laser_a_imec=ttl_laser_a_imec,
+)
+
+print("[CACHE] Saved aligned TTLs to:", ttl_cache)
 
 
 #%% Step 11
@@ -392,10 +458,10 @@ bits_preview = ((nidq_dig_word[:nidq_n, None] >> np.arange(16)) & 1).astype(np.i
 t = np.arange(nidq_n) / nidq_fs
 
 plt.figure(figsize=(12, 4))
-plt.plot(t, bits_preview[:, BIT_LED] + 0, label="DI4 LED")
-plt.plot(t, bits_preview[:, BIT_STIM] + 2, label="DI5 STIM")
-plt.plot(t, bits_preview[:, BIT_PUN] + 4, label="DI6 PUN")
-plt.plot(t, bits_preview[:, BIT_REW] + 6, label="DI7 REW")
+plt.plot(t, bits_preview[:, BIT_led] + 0, label="DI4 LED")
+plt.plot(t, bits_preview[:, BIT_stim] + 2, label="DI5 STIM")
+plt.plot(t, bits_preview[:, BIT_punish] + 4, label="DI6 PUN")
+plt.plot(t, bits_preview[:, BIT_reward] + 6, label="DI7 REW")
 plt.title("NIDQ digital lines (first 20 s, stacked)")
 plt.yticks([])
 plt.xlabel("Time (s)")
