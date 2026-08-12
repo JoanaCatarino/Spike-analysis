@@ -13,24 +13,28 @@ import matplotlib.pyplot as plt
 
 # ---------- File paths ----------
 
-base_nidq = "L:/dmclab/Joana/PFC-Str_behavior_project/Recordings/Raw_data/999770/999770_day1_g0"
-base_imec = base_nidq + "/999770_day1_1_g0_imec1"
-ttl_align_dir = "L:/Joana/PFC-Str_behavior_project/Recordings/Sorted/999770/999770_day1_1_g0_t0_imec1/TTL_alignment"
+animal = 986170
+probe = "imec0"
+day = 3
+
+base_nidq = "L:/dmclab/Joana/PFC-Str_behavior_project/Recordings/Raw_data/986170/986170_day3_g0"
+base_imec = base_nidq + "/986170_day3_g0_imec0"
+ttl_align_dir = "L:/dmclab/Joana/PFC-Str_behavior_project/Recordings/Sorted/986170/986170_day3_g0_t0_imec0/TTL_alignment"
 
 # Nidaq files
-path_nidq_meta = base_nidq + "/999770_day1_1_g0_t0.nidq.meta"
-path_nidq_bin = base_nidq + "/999770_day1_1_g0_t0.nidq.bin"
+path_nidq_meta = base_nidq + "/986170_day3_g0_t0.nidq.meta"
+path_nidq_bin = base_nidq + "/986170_day3_g0_t0.nidq.bin"
 
 # IMEC files
-path_imec_ap_meta = base_imec + "/999770_day1_1_g0_t0.imec1.ap.meta"
-path_imec_ap_bin = base_imec + "/999770_day1_1_g0_t0.imec1.ap.bin"
-path_imec_lf_meta = base_imec + "/999770_day1_1_g0_t0.imec1.lf.meta"
-path_imec_lf_bin = base_imec + "/999770_day1_1_g0_t0.imec1.lf.bin"
+path_imec_ap_meta = base_imec + "/986170_day3_g0_t0.imec0.ap.meta"
+path_imec_ap_bin = base_imec + "/986170_day3_g0_t0.imec0.ap.bin"
+path_imec_lf_meta = base_imec + "/986170_day3_g0_t0.imec0.lf.meta"
+path_imec_lf_bin = base_imec + "/986170_day3_g0_t0.imec0.lf.bin"
 
 thr_sy = 10
-sy_cache    = os.path.join(ttl_align_dir, f"imec_SY_windows_thr{thr_sy}.npy")
-align_cache = os.path.join(ttl_align_dir, "alignment_params.npz")
-ttl_cache   = os.path.join(ttl_align_dir, "ttl_aligned_imec_time.npz")
+sy_cache    = os.path.join(ttl_align_dir, f"{animal}_day{day}_{probe}_SY_windows_thr{thr_sy}.npy")
+align_cache = os.path.join(ttl_align_dir, f"{animal}_day{day}_{probe}_alignment_params.npz")
+ttl_cache   = os.path.join(ttl_align_dir, f"{animal}_day{day}_{probe}_ttl_aligned_imec_time.npz")
 
 
 #%% Step 2
@@ -100,6 +104,7 @@ print("[DATA] nidq shape:", nidq_bin.shape)
 print("[DATA] imec shape:", imec_ap_bin.shape)
 
 
+
 #%% Step 5
 
 # Extract IMEC SY + Split NIDQ analog + Digital word
@@ -107,7 +112,7 @@ print("[DATA] imec shape:", imec_ap_bin.shape)
 
 #  ---------- IMEC AP: sync is typically the last saved channel ("SY") ----------
 imec_sync = imec_ap_bin[:, -1]  # int16 vector
-plt.plot(imec_sync[:1000000])  # Sanity check to quickly plot the sync channel and check is not empty
+plt.plot(imec_sync[0:10000000])  # Sanity check to quickly plot the sync channel and check is not empty
 
 
 # ---------- NiDaq: split analog + digital ----------
@@ -265,6 +270,10 @@ print("[TTL analog windows] LED:", win_led_a.shape[0], "SOUND:", win_sound_a.sha
 
 
 # ---------- IMEC SY windows: threshold depends on your SY amplitude ----------
+
+# Make sure the TTL_alignment folder exists before saving caches
+os.makedirs(ttl_align_dir, exist_ok=True)
+
 thr_sy = 10
 
 if os.path.exists(sy_cache):
@@ -294,6 +303,7 @@ ttl_laser_a = windows_to_pairs(win_laser_a, nidq_fs)
 ttl_sy = windows_to_pairs(win_sy, imec_fs)  # SY in IMEC timebase
 imec_rise = ttl_sy[:, 0]                    # use rises for alignment
 print("[IMEC SY] rises:", imec_rise.size)
+
 
 #%% Step 9
 
@@ -361,31 +371,33 @@ def fit_time_mapping(nidq_rise_s, imec_rise_s, coarse_lag_s=0.0, n_fit=5000):
 
 
 # Find sync bit automatically (like your earlier code, but using pairs dict)
-best_sync = best_nidq_sync_line_from_pairs(imec_rise, ttls_daq, search_bits=range(16), t_search_s=60)
-sync_bit = best_sync["bit"]
-coarse_lag_s = best_sync["lag_s"]
-print(f"[ALIGN] Best NIDQ sync bit: DI{sync_bit}, coarse lag {coarse_lag_s:.6f} s")
+if os.path.exists(align_cache):
+    print("[CACHE] Loading alignment params:", align_cache)
+    z = np.load(align_cache)
+    sync_bit = int(z["sync_bit"])
+    coarse_lag_s = float(z["coarse_lag_s"])
+    a = float(z["a"])
+    b = float(z["b"])
+else:
+    print("[ALIGN] Computing alignment params (one-time)...")
+    best_sync = best_nidq_sync_line_from_pairs(imec_rise, ttls_daq, search_bits=range(16), t_search_s=600)
+    sync_bit = best_sync["bit"]
+    coarse_lag_s = best_sync["lag_s"]
 
-nidq_sync_rise = ttls_daq[sync_bit][:, 0]
-a, b = fit_time_mapping(nidq_sync_rise, imec_rise, coarse_lag_s=coarse_lag_s, n_fit=5000)
-print(f"[ALIGN] t_imec ≈ {a:.12f} * t_nidq + {b:.6f}")
+    nidq_sync_rise = ttls_daq[sync_bit][:, 0]
+    a, b = fit_time_mapping(nidq_sync_rise, imec_rise, coarse_lag_s=coarse_lag_s, n_fit=5000)
 
+    np.savez(
+        align_cache,
+        sync_bit=sync_bit,
+        coarse_lag_s=coarse_lag_s,
+        a=a, b=b,
+        nidq_fs=nidq_fs,
+        imec_fs=imec_fs,
+    )
+    print("[CACHE] Saved alignment params:", align_cache)
 
-# ---------- Save alignment parameters ----------
-
-align_cache = os.path.join(aligned_saved, "alignment_params.npz")
-
-np.savez(
-    align_cache,
-    sync_bit=sync_bit,
-    coarse_lag_s=coarse_lag_s,
-    a=a,
-    b=b,
-    nidq_fs=nidq_fs,
-    imec_fs=imec_fs,
-)
-
-print("[CACHE] Saved alignment parameters to:", align_cache)
+print(f"[ALIGN] DI{sync_bit}, a={a:.12f}, b={b:.6f}, coarse_lag={coarse_lag_s:.6f}s")
 
 
 def nidq_to_imec(t_s):
@@ -395,41 +407,51 @@ def nidq_to_imec(t_s):
 
 # ---------- Align all nidq TTL pairs into Imec timebase ----------
 
-def map_pairs_to_imec(pairs):
-    if pairs.size == 0:
-        return pairs.copy()
-    out = pairs.copy().astype(np.float64)
-    out[:, 0] = nidq_to_imec(out[:, 0])
-    out[:, 1] = nidq_to_imec(out[:, 1])
-    return out
+if os.path.exists(ttl_cache):
+    print("[CACHE] Loading aligned TTLs:", ttl_cache)
+    z = np.load(ttl_cache)
 
-ttl_led_d_imec   = map_pairs_to_imec(ttl_led_d)
-ttl_stim_d_imec  = map_pairs_to_imec(ttl_stim_d)
-ttl_pun_d_imec   = map_pairs_to_imec(ttl_pun_d)
-ttl_rew_d_imec   = map_pairs_to_imec(ttl_rew_d)
+    ttl_led_d_imec   = z["ttl_led_d_imec"]
+    ttl_stim_d_imec  = z["ttl_stim_d_imec"]
+    ttl_pun_d_imec   = z["ttl_pun_d_imec"]
+    ttl_rew_d_imec   = z["ttl_rew_d_imec"]
+    ttl_led_a_imec   = z["ttl_led_a_imec"]
+    ttl_sound_a_imec = z["ttl_sound_a_imec"]
+    ttl_laser_a_imec = z["ttl_laser_a_imec"]
 
-ttl_led_a_imec   = map_pairs_to_imec(ttl_led_a)
-ttl_sound_a_imec = map_pairs_to_imec(ttl_sound_a)
-ttl_laser_a_imec = map_pairs_to_imec(ttl_laser_a)
+else:
+    print("[TTL] Computing aligned TTLs (one-time)...")
 
-print("[DONE] All NIDQ TTLs now have [rise, fall] in IMEC seconds.")
+    def map_pairs_to_imec(pairs):
+        if pairs.size == 0:
+            return pairs.copy()
+        out = pairs.astype(np.float64, copy=True)
+        out[:, 0] = nidq_to_imec(out[:, 0])
+        out[:, 1] = nidq_to_imec(out[:, 1])
+        return out
 
-# ---------- Save aligned TTLs ----------
+    ttl_led_d_imec   = map_pairs_to_imec(ttl_led_d)
+    ttl_stim_d_imec  = map_pairs_to_imec(ttl_stim_d)
+    ttl_pun_d_imec   = map_pairs_to_imec(ttl_pun_d)
+    ttl_rew_d_imec   = map_pairs_to_imec(ttl_rew_d)
 
-ttl_cache = os.path.join(ttl_align_dir, "ttl_aligned_imec_time.npz")
+    ttl_led_a_imec   = map_pairs_to_imec(ttl_led_a)
+    ttl_sound_a_imec = map_pairs_to_imec(ttl_sound_a)
+    ttl_laser_a_imec = map_pairs_to_imec(ttl_laser_a)
 
-np.savez(
-    ttl_cache,
-    ttl_led_d_imec=ttl_led_d_imec,
-    ttl_stim_d_imec=ttl_stim_d_imec,
-    ttl_pun_d_imec=ttl_pun_d_imec,
-    ttl_rew_d_imec=ttl_rew_d_imec,
-    ttl_led_a_imec=ttl_led_a_imec,
-    ttl_sound_a_imec=ttl_sound_a_imec,
-    ttl_laser_a_imec=ttl_laser_a_imec,
-)
+    np.savez(
+        ttl_cache,
+        ttl_led_d_imec=ttl_led_d_imec,
+        ttl_stim_d_imec=ttl_stim_d_imec,
+        ttl_pun_d_imec=ttl_pun_d_imec,
+        ttl_rew_d_imec=ttl_rew_d_imec,
+        ttl_led_a_imec=ttl_led_a_imec,
+        ttl_sound_a_imec=ttl_sound_a_imec,
+        ttl_laser_a_imec=ttl_laser_a_imec,
+    )
+    print("[CACHE] Saved aligned TTLs:", ttl_cache)
 
-print("[CACHE] Saved aligned TTLs to:", ttl_cache)
+print("[READY] TTLs are available in IMEC timebase.")
 
 
 #%% Step 11
@@ -474,6 +496,17 @@ plt.figure(figsize=(12, 3))
 plt.plot(t, ai_blue_led[:nidq_n], label="XA0 LED")
 plt.plot(t, np.full_like(t, thr_led_v), "--", label=f"thr={thr_led_v} V")
 plt.title("XA0 LED monitor + threshold")
+plt.xlabel("Time (s)")
+plt.ylabel("V")
+plt.legend()
+plt.tight_layout()
+plt.show()
+
+# Analog monitors + thresholds
+plt.figure(figsize=(12, 3))
+plt.plot(t, ai_laser[5400:], label="laser")
+plt.plot(t, np.full_like(t, thr_laser_v), "--", label=f"thr={thr_laser_v} V")
+plt.title("laser monitor + threshold")
 plt.xlabel("Time (s)")
 plt.ylabel("V")
 plt.legend()

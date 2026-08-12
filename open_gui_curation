@@ -1,0 +1,45 @@
+#%%
+import spikeinterface.full as si
+from spikeinterface_gui import run_mainwindow
+import json
+
+import spikeinterface.full as si
+import spikeinterface.curation as sc
+from spikeinterface.curation.curation_model import CurationModel
+from spikeinterface.curation import validate_curation_dict
+from pathlib import Path
+import pandas as pd
+import numpy as np
+import tqdm
+import json
+
+# load SortingAnalyzer
+analyzer_folder = Path('C:/Users/JoanaCatarino/Joana/test_si/analyzer_output')
+#analyzer_folder = Path('L:/dmclab/Joana/PFC-Str_behavior_project/Recordings/Sorted/999770/999770_day1_g0_imec1/analyzer_kilosort4')
+if analyzer_folder.is_dir():
+    print("Loading analyzer from disk")
+    analyzer = si.load(analyzer_folder, load_extensions=True)
+
+
+# Load your saved curation file
+curation_file = analyzer_folder / "curation.json"
+curation_dict = json.loads(curation_file.read_text())
+
+with open('C:/Users/JoanaCatarino/si_env/Lib/site-packages/spikeinterface_gui/settings/quality_settings.json', 'r') as f:
+    settings_dict = json.load(f)
+with open ('C:/Users/JoanaCatarino/si_env/Lib/site-packages/spikeinterface_gui/layouts/layout_quality.json', 'r') as f:
+    layout_dict = json.load(f)
+
+
+# Reopen the GUI with the saved curation
+run_mainwindow(
+    analyzer,
+    mode="desktop",
+    displayed_unit_properties=["passing_qc", "unitrefine_prediction", "unitrefine_probability"],
+    curation=True,
+    curation_dict=curation_dict,  # <-- your saved labels/merges/removed units reload here
+    layout=layout_dict,
+    user_settings=settings_dict
+)
+# %%
+
